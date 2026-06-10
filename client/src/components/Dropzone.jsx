@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import axios from 'axios'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 const FORMAT_OPTIONS = {
   image: ['jpg', 'png', 'webp', 'gif', 'bmp'],
   audio: ['mp3', 'wav', 'ogg'],
@@ -71,12 +73,12 @@ export default function Dropzone({ onConversionsQueued }) {
       const fd = new FormData()
       files.forEach(function(f) { fd.append('files', f) })
       fd.append('targetFormat', targetFormat)
-      const res = await axios.post('/api/upload', fd)
+      const res = await axios.post(`${API_BASE}/api/upload`, fd)
       onConversionsQueued(res.data.conversions)
       setFiles([])
       setTargetFormat('')
     } catch (e) {
-      setError('Upload failed. Make sure the server is running on port 4000.')
+      setError('Upload failed. Please try again.')
     } finally {
       setUploading(false)
     }
@@ -221,5 +223,3 @@ export default function Dropzone({ onConversionsQueued }) {
     </div>
   )
 }
-
-
