@@ -1,4 +1,6 @@
-.env
-server/.env
-client/.env
 node_modules/
+.env
+server/uploads/*
+server/outputs/*
+server/data/*.db
+client/dist/

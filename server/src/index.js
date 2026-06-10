@@ -43,8 +43,15 @@ app.get('/api/download/:id', (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, '../../client/dist')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
+
+// Fix: use (req, res) => instead of wildcard *
+app.use((req, res) => {
+  const indexPath = path.join(__dirname, '../../client/dist/index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).json({ error: 'Client not built yet' });
+  }
 });
 
 app.listen(PORT, () => {
