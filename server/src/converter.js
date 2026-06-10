@@ -1,6 +1,7 @@
-// server/src/converter.js
+
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
@@ -13,20 +14,21 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const UPLOADS_DIR = path.join(__dirname, '../uploads');
 const OUTPUTS_DIR = path.join(__dirname, '../outputs');
 
-// Make sure outputs folder exists
 if (!fs.existsSync(OUTPUTS_DIR)) fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
 
 // ── Images ────────────────────────────────────────────────────────────────────
 async function convertImage(sourcePath, targetFormat) {
-  const outFile = path.join(OUTPUTS_DIR, path.basename(sourcePath, path.extname(sourcePath)) + '.' + targetFormat);
-  await sharp(sourcePath).toFormat(targetFormat).toFile(outFile);
+  const base = path.basename(sourcePath, path.extname(sourcePath));
+  const outFile = path.join(OUTPUTS_DIR, base + '.' + targetFormat);
+  await sharp(sourcePath).toFormat(targetFormat === 'jpg' ? 'jpeg' : targetFormat).toFile(outFile);
   return outFile;
 }
 
 // ── Audio / Video ─────────────────────────────────────────────────────────────
 function convertMedia(sourcePath, targetFormat) {
   return new Promise((resolve, reject) => {
-    const outFile = path.join(OUTPUTS_DIR, path.basename(sourcePath, path.extname(sourcePath)) + '.' + targetFormat);
+    const base = path.basename(sourcePath, path.extname(sourcePath));
+    const outFile = path.join(OUTPUTS_DIR, base + '.' + targetFormat);
     ffmpeg(sourcePath)
       .toFormat(targetFormat)
       .on('end', () => resolve(outFile))
@@ -35,42 +37,72 @@ function convertMedia(sourcePath, targetFormat) {
   });
 }
 
-// ── DOCX → TXT ────────────────────────────────────────────────────────────────
+// ── LibreOffice conversion (DOCX/PDF → PDF/TXT/DOCX) ─────────────────────────
+function convertWithLibreOffice(sourcePath, targetFormat) {
+  try {
+    const cmd = 'libreoffice --headless --convert-to ' + targetFormat + ' --outdir "' + OUTPUTS_DIR + '" "' + sourcePath + '"';
+    execSync(cmd, { timeout: 60000 });
+    const base = path.basename(sourcePath, path.extname(sourcePath));
+    const outFile = path.join(OUTPUTS_DIR, base + '.' + targetFormat);
+    if (fs.existsSync(outFile)) return outFile;
+    throw new Error('LibreOffice output file not found');
+  } catch (err) {
+    throw new Error('LibreOffice conversion failed: ' + err.message);
+  }
+}
+
+// ── DOCX → TXT fallback ───────────────────────────────────────────────────────
 async function docxToTxt(sourcePath) {
-  const outFile = path.join(OUTPUTS_DIR, path.basename(sourcePath, '.docx') + '.txt');
+  const base = path.basename(sourcePath, path.extname(sourcePath));
+  const outFile = path.join(OUTPUTS_DIR, base + '.txt');
   const result = await mammoth.extractRawText({ path: sourcePath });
   fs.writeFileSync(outFile, result.value);
   return outFile;
 }
 
-// ── DOCX → PDF (basic — embeds text as a simple PDF) ─────────────────────────
-async function docxToPdf(sourcePath) {
+// ── DOCX → PDF fallback (basic) ───────────────────────────────────────────────
+async function docxToPdfFallback(sourcePath) {
   const txtResult = await mammoth.extractRawText({ path: sourcePath });
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage();
   const { height } = page.getSize();
-  page.drawText(txtResult.value.slice(0, 2000), { x: 50, y: height - 60, size: 11, maxWidth: 500, lineHeight: 16 });
+  page.drawText(txtResult.value.slice(0, 3000), {
+    x: 50, y: height - 60, size: 11, maxWidth: 500, lineHeight: 16,
+  });
   const pdfBytes = await pdfDoc.save();
-  const outFile = path.join(OUTPUTS_DIR, path.basename(sourcePath, '.docx') + '.pdf');
+  const base = path.basename(sourcePath, path.extname(sourcePath));
+  const outFile = path.join(OUTPUTS_DIR, base + '.pdf');
   fs.writeFileSync(outFile, pdfBytes);
   return outFile;
 }
 
-// ── CSV ↔ XLSX ────────────────────────────────────────────────────────────────
+// ── Spreadsheets ──────────────────────────────────────────────────────────────
 function convertSpreadsheet(sourcePath, targetFormat) {
+  const base = path.basename(sourcePath, path.extname(sourcePath));
+  const outFile = path.join(OUTPUTS_DIR, base + '.' + targetFormat);
   const wb = XLSX.readFile(sourcePath);
-  const outFile = path.join(OUTPUTS_DIR, path.basename(sourcePath, path.extname(sourcePath)) + '.' + targetFormat);
   XLSX.writeFile(wb, outFile);
   return outFile;
+}
+
+// ── Check if LibreOffice is available ────────────────────────────────────────
+function hasLibreOffice() {
+  try {
+    execSync('libreoffice --version', { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Main dispatcher ───────────────────────────────────────────────────────────
 async function convert(sourcePath, sourceMime, targetFormat) {
   const fmt = targetFormat.toLowerCase();
+  const libreAvailable = hasLibreOffice();
 
   // Images
   if (sourceMime.startsWith('image/') && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(fmt)) {
-    return convertImage(sourcePath, fmt === 'jpg' ? 'jpeg' : fmt);
+    return convertImage(sourcePath, fmt);
   }
 
   // Audio
@@ -83,14 +115,20 @@ async function convert(sourcePath, sourceMime, targetFormat) {
     return convertMedia(sourcePath, fmt);
   }
 
+  // DOCX → PDF
+  if (sourceMime.includes('wordprocessingml') && fmt === 'pdf') {
+    if (libreAvailable) return convertWithLibreOffice(sourcePath, 'pdf');
+    return docxToPdfFallback(sourcePath);
+  }
+
   // DOCX → TXT
   if (sourceMime.includes('wordprocessingml') && fmt === 'txt') {
     return docxToTxt(sourcePath);
   }
 
-  // DOCX → PDF
-  if (sourceMime.includes('wordprocessingml') && fmt === 'pdf') {
-    return docxToPdf(sourcePath);
+  // PDF → anything (LibreOffice)
+  if (sourceMime === 'application/pdf' && libreAvailable) {
+    return convertWithLibreOffice(sourcePath, fmt);
   }
 
   // Spreadsheets
@@ -98,7 +136,8 @@ async function convert(sourcePath, sourceMime, targetFormat) {
     return convertSpreadsheet(sourcePath, fmt);
   }
 
-  throw new Error(`Unsupported conversion: ${sourceMime} → ${targetFormat}`);
+  throw new Error('Unsupported conversion: ' + sourceMime + ' to ' + targetFormat);
 }
 
 module.exports = { convert };
+
