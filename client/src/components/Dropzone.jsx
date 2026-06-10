@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+const API = import.meta.env.VITE_API_URL || ''
 
 const FORMAT_OPTIONS = {
   image: ['jpg', 'png', 'webp', 'gif', 'bmp'],
@@ -73,12 +73,12 @@ export default function Dropzone({ onConversionsQueued }) {
       const fd = new FormData()
       files.forEach(function(f) { fd.append('files', f) })
       fd.append('targetFormat', targetFormat)
-      const res = await axios.post(`${API_BASE}/api/upload`, fd)
+      const res = await axios.post(API + '/api/upload', fd)
       onConversionsQueued(res.data.conversions)
       setFiles([])
       setTargetFormat('')
     } catch (e) {
-      setError('Upload failed. Please try again.')
+      setError('Upload failed. Make sure the server is running.')
     } finally {
       setUploading(false)
     }
@@ -104,10 +104,6 @@ export default function Dropzone({ onConversionsQueued }) {
           overflow: 'hidden',
         }}
       >
-        {dragging && (
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(109,40,217,0.05)', borderRadius: '20px', pointerEvents: 'none' }} />
-        )}
-
         <input ref={inputRef} type="file" multiple style={{ display: 'none' }} onChange={function(e) { handleFiles(e.target.files) }} />
 
         {files.length === 0 ? (
